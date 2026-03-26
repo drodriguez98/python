@@ -2,8 +2,11 @@ import pyttsx3
 import keyboard
 import webbrowser
 import time
-from datetime import datetime
+import io
+import numpy as np
+import sounddevice as sd
 import speech_recognition as sr
+from scipy.io.wavfile import write as wav_write
 import os
 
 # Diccionario con las rutas de los juegos instalados
@@ -15,22 +18,24 @@ diccionarioJuegos = {
     "gta 4": "D:\\games\\Grand Theft Auto IV\\GTAIV.exe",
     "gta 5": "D:\\games\\Grand Theft Auto V\\GTA5.exe",
     "monopoly": "D:\\games\\Monopoly Plus\\Monopoly.exe",
-    "nba ": "D:\\SteamLibrary\\steamapps\\common\\NBA 2K23\\NBA2K23.exe",
+    "nba": "D:\\SteamLibrary\\steamapps\\common\\NBA 2K23\\NBA2K23.exe",
     "outlast": "D:\\SteamLibrary\\steamapps\\common\\Outlast\\OutlastLauncher.exe",
     "outlast 2": "D:\\SteamLibrary\\steamapps\\common\\Outlast 2\\Binaries\\Win64\\Outlast2.exe",
     "risk": "D:\\SteamLibrary\\steamapps\\common\\RISK Global Domination\\RISK.exe",
     "rocket league": "D:\\games\\rocketleague\\Binaries\\Win64\\RocketLeague.exe",
     "warzone": "D:\\games\\Call of Duty\\Call of Duty Launcher.exe",
-    "wrc": "D:\\SteamLibrary\\steamapps\\common\\WRC 10 FIA World Rally Championship\\WRC10.exe",    
+    "wrc": "D:\\SteamLibrary\\steamapps\\common\\WRC 10 FIA World Rally Championship\\WRC10.exe",
     "x defiant": "D:\\games\\XDefiant\\XDefiant.exe",
-    # Agregar más juegos o aplicaciones y sus rutas aquí
 }
+
+SAMPLE_RATE = 16000  # 16kHz es suficiente para voz y más liviano
+DURACION    = 5      # segundos de grabación por comando
 
 # Función para configurar e inicializar el motor de voz
 def inicializarVoz():
     motor = pyttsx3.init()
-    motor.setProperty('rate', 125)  # Velocidad del habla
-    motor.setProperty('volume', 0.85)  # Volumen
+    motor.setProperty('rate', 125)
+    motor.setProperty('volume', 0.85)
     return motor
 
 # Función para convertir texto a voz
@@ -38,16 +43,32 @@ def hablar(motor, texto):
     motor.say(texto)
     motor.runAndWait()
 
+# Graba audio con sounddevice y lo convierte a AudioData de SpeechRecognition
+def grabarAudio(duracion=DURACION, samplerate=SAMPLE_RATE):
+    print("Escuchando...")
+    grabacion = sd.rec(
+        int(duracion * samplerate),
+        samplerate=samplerate,
+        channels=1,
+        dtype="int16"
+    )
+    sd.wait()  # espera a que termine la grabación
+
+    # Convertir numpy array -> WAV en memoria -> AudioData
+    buffer = io.BytesIO()
+    wav_write(buffer, samplerate, grabacion)
+    buffer.seek(0)
+    audio_data = sr.AudioData(buffer.read(), samplerate, 2)
+    return audio_data
+
 # Función para reconocer el input de voz del usuario
 def reconocerVoz(idioma="es-ES"):
     recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("Escuchando...")
-        audio = recognizer.listen(source)
+    audio = grabarAudio()
     try:
-        input = recognizer.recognize_google(audio, language=idioma)
-        print(f"Tú: {input}")
-        return input.lower()
+        resultado = recognizer.recognize_google(audio, language=idioma)
+        print(f"Tú: {resultado}")
+        return resultado.lower()
     except sr.UnknownValueError:
         return "No entendí lo que dijiste."
     except sr.RequestError:
@@ -59,53 +80,50 @@ def realizarBusqueda(busqueda):
     webbrowser.open(url)
     return f"Buscando {busqueda} en Google."
 
-# Función para abrir una juego
+# Función para abrir un juego
 def abrirJuego(ruta):
     if os.path.exists(ruta):
         os.startfile(ruta)
-        return f"Abriendo el juego solicitado."
+        return "Abriendo el juego solicitado."
     else:
         return "No se encontró el juego solicitado."
 
 def main():
-    # Inicializar el motor de voz
     motor = inicializarVoz()
-    # Saludo inicial
     hablar(motor, "Hola, estoy listo para ayudarte.")
     print("Mantén presionada la tecla F7 para hablar.")
-    # Bucle infinito hasta que el usuario diga "salir" o "adiós"
+
     while True:
-        # Usar la tecla F7 para activar el asistente de voz
         if keyboard.is_pressed('F7'):
             hablar(motor, "¿Qué deseas hacer?")
-            input = reconocerVoz()
-            # Cerrar el asistente
-            if "salir" in input or "adiós" in input:
+            comando = reconocerVoz()
+
+            if "salir" in comando or "adiós" in comando:
                 hablar(motor, "Hasta luego.")
                 break
-            # Hacer búsquedas en Google
-            elif "buscar" in input:
+
+            elif "buscar" in comando:
                 hablar(motor, "¿Qué deseas buscar?")
                 busqueda = reconocerVoz()
-                resultado_busqueda = realizarBusqueda(busqueda)
-                hablar(motor, resultado_busqueda)
-            # Abrir un juego
-            elif "abrir juego" in input:
+                resultado = realizarBusqueda(busqueda)
+                hablar(motor, resultado)
+
+            elif "abrir juego" in comando:
                 hablar(motor, "¿Qué juego deseas abrir?")
                 juego = reconocerVoz()
-                # Detectar idioma automáticamente para el nombre del juego
                 if juego not in diccionarioJuegos:
                     hablar(motor, "Intentaré detectar el idioma del nombre.")
                     juego = reconocerVoz(idioma="en-US")
                 if juego in diccionarioJuegos:
                     ruta = diccionarioJuegos[juego]
-                    resultado_apertura = abrirJuego(ruta)
-                    hablar(motor, resultado_apertura)
+                    resultado = abrirJuego(ruta)
+                    hablar(motor, resultado)
                 else:
                     hablar(motor, "No tengo registrado ese juego.")
-            # inputs no reconocidos
+
             else:
-                hablar(motor, "No reconozco ese input.")
+                hablar(motor, "No reconozco ese comando.")
+
         time.sleep(0.1)
 
 if __name__ == "__main__":
